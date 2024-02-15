@@ -51,19 +51,20 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //5.扣减库存
         boolean success = seckillVoucherService.update()
                 .setSql("stock = stock - 1")
-                .eq("voucher_id", voucherId).update();
+                .eq("voucher_id", voucherId).gt("stock",0)
+                .update();
         if(!success){
             return Result.fail("库存不足");
         }
         //6.创建订单
         VoucherOrder voucherOrder = new VoucherOrder();
-        //订单id
+        //订单id，用工具类生成的
         long orderId = redisIdWorker.nextId("order");
         voucherOrder.setId(orderId);
-        //用户id
+        //用户id，从threadLocal里得到的
         Long userId = UserHolder.getUser().getId();
         voucherOrder.setUserId(userId);
-        //代金券id
+        //代金券id，即前端传过来的id
         voucherOrder.setVoucherId(voucherId);
         save(voucherOrder);
         return Result.ok(orderId);
