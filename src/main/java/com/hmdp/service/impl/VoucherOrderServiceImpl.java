@@ -2,6 +2,7 @@ package com.hmdp.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
@@ -10,6 +11,7 @@ import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,7 +34,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private ISeckillVoucherService seckillVoucherService;
 
     @Override
-    @Transactional
+
     public Result seckilVoucher(Long voucherId) {
         //1.查询优惠券
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
@@ -48,6 +50,25 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if(voucher.getStock() < 1){
             return Result.fail("库存不足");
         }
+        Long userId = UserHolder.getUser().getId();
+        synchronized (userId.toString().intern()) {
+            //拿到事务代理对象，防止事务失效
+            IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
+            return proxy.createVocherOrder(voucherId);
+        }
+    }
+
+    @Transactional
+    public Result createVocherOrder(Long voucherId) {
+        //6.一人一单
+        //查询订单
+        Long userId = UserHolder.getUser().getId();
+
+        int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+        if(count > 0){
+            //判断
+            return Result.fail("已下过单");
+        }
         //5.扣减库存
         boolean success = seckillVoucherService.update()
                 .setSql("stock = stock - 1")
@@ -62,7 +83,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         long orderId = redisIdWorker.nextId("order");
         voucherOrder.setId(orderId);
         //用户id，从threadLocal里得到的
-        Long userId = UserHolder.getUser().getId();
         voucherOrder.setUserId(userId);
         //代金券id，即前端传过来的id
         voucherOrder.setVoucherId(voucherId);
