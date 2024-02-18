@@ -15,12 +15,15 @@ import com.hmdp.utils.UserHolder;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -39,10 +42,42 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private ISeckillVoucherService seckillVoucherService;
     @Resource
     private RedissonClient redissonClient;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
+    //放在静态代码块中，类一加载就会一同加载
+    static {
+        SECKILL_SCRIPT = new DefaultRedisScript<>();
+        SECKILL_SCRIPT.setLocation(new ClassPathResource("seckill.lua"));
+        SECKILL_SCRIPT.setResultType(Long.class);
+    }
 
     @Override
+    public Result seckillVoucher(Long voucherId){
+        Long id = UserHolder.getUser().getId();
+        long orderId = redisIdWorker.nextId("order");
+        // 1.执行lua脚本
+        Long result = stringRedisTemplate.execute(
+                SECKILL_SCRIPT,
+                Collections.emptyList(),
+                voucherId.toString(), id.toString(),String.valueOf(orderId)
+        );
+        //2.判断是否是0
+        int r = result.intValue();
+        //2.1  没有
+        if(r != 0){
+            Result.fail(r == 1?"库存不足":"不能重复下单");
+        }
+        //2.2  0 有购买资格,保存阻塞队列
 
-    public Result seckilVoucher(Long voucherId) {
+        // 3. 返回订单id；
+        return Result.ok();
+    }
+
+    /*@Override
+
+    public Result seckilVoucher(Long voucherId) throws InterruptedException {
         //1.查询优惠券
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
         //2.判断秒杀是否开始
@@ -61,7 +96,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //        SimpleRedisLock lock = new SimpleRedisLock("order:" + userId,stringRedisTemplate);
         RLock lock = redissonClient.getLock("lock:order:" + userId);
         //失败了不等待
-        boolean isLock = lock.tryLock();
+        boolean isLock = lock.tryLock(1L,TimeUnit.SECONDS);
         //判断是否获取锁成功
         if(!isLock){
             //获取锁失败，返回错误或重试
@@ -79,8 +114,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             lock.unlock();
         }
 
-    }
+    }*/
 
+    @Override
     @Transactional
     public Result createVocherOrder(Long voucherId) {
         //6.一人一单
